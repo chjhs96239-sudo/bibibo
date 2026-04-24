@@ -120,4 +120,4 @@ st.sidebar.divider()
 st.sidebar.markdown("### 📱 分享問卷")
 st.sidebar.write("掃描下方 QRCode 即可填寫：")
 # 使用圖片 API 生成 QRCode
-st.sidebar.image("https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://bibibo.streamlit.app")
+st.sidebar.image("https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://bibibo-ceup2svsqq2kju7jjj2hvz.streamlit.app/&color=1a5d1a")
