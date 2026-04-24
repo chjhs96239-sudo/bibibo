@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台南綠園道民意調查</title>
+    <!-- 引入 Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --primary: #1a5d1a; --accent: #f99417; --bg: #f8fafc; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 600px; }
+        header { background: linear-gradient(135deg, #1a5d1a, #114211); color: white; padding: 40px 20px; border-radius: 24px; text-align: center; margin-bottom: 30px; }
+        .card { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .q-title { font-weight: 700; color: var(--primary); font-size: 18px; margin-bottom: 10px; display: flex; justify-content: space-between; }
+        .q-text { font-size: 14px; color: #4a5568; margin-bottom: 20px; line-height: 1.5; }
+        input[type=range] { width: 100%; height: 8px; background: #edf2f7; border-radius: 4px; -webkit-appearance: none; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; background: var(--primary); border-radius: 50%; cursor: pointer; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { width: 100%; padding: 18px; background: var(--accent); color: white; border: none; border-radius: 20px; font-size: 18px; font-weight: 800; cursor: pointer; }
+        .success { display: none; text-align: center; padding: 60px 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="survey">
+            <header>
+                <h1>台南綠園道民意調查</h1>
+                <p>多人填寫版 (雲端連線中)</p>
+            </header>
+            <div id="q-list"></div>
+            <button class="btn" id="submit-btn" onclick="submit()">提交意見</button>
+            <p id="msg" style="text-align:center; font-size:12px; color:red;"></p>
+        </div>
+        <div id="success" class="success">
+            <h1 style="color: var(--primary); font-size: 48px;">✓</h1>
+            <h2>提交成功！</h2>
+            <p>您的意見已成功紀錄於雲端庫。</p>
+            <button class="btn" style="background:#4a5568;" onclick="location.reload()">再次填寫</button>
+        </div>
+    </div>
+    <script>
+        // --- 請替換下方的連線資訊 ---
+        const SUPABASE_URL = 'https://vbfzpnkyudvkzvrwpzbq.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZiZnpwbmt5dWR2a3p2cndwemJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NjY4MzgsImV4cCI6MjA5MjU0MjgzOH0.LjLSDPVlSP8Mrk5uvf44P-PMFx5e6-9RkstnA7-qsCc';
+        // -----------------------
+
+        let supabaseClient;
+        let isMockMode = false;
+
+        // 檢查是否已設定金鑰，若未設定則進入「展示模式 (Mock Mode)」
+        if (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_URL === '') {
+            console.warn("未設定 Supabase 金鑰，切換至展示模式 (使用瀏覽器儲存)。");
+            isMockMode = true;
+            document.getElementById('msg').innerHTML = "<span style='color:orange;'>⚠️ 目前為展示模式 (資料將儲存於此瀏覽器)</span>";
+        } else {
+            try {
+                supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            } catch(e) {
+                isMockMode = true;
+                document.getElementById('msg').innerText = "連線初始化失敗，切換至展示模式。";
+            }
+        }
+
+        const qs = [
+            { id: 'privacy', title: '1. 隱私 vs. 視野', text: '水平距離多近你會開始感到不安？', min: 3, max: 30, unit: 'm', val: 15 },
+            { id: 'thermal', title: '2. 體感溫度 vs. 壓迫', text: '願意接受多少結構體遮蔽天空？', min: 0, max: 100, unit: '%', val: 50 },
+            { id: 'effort', title: '3. 坡度 vs. 安全', text: '願意爬多長的坡來換取交通安全？', min: 0, max: 100, unit: 'm', val: 50 },
+            { id: 'shading', title: '4. 遮蔭 vs. 夜間安全', text: '犧牲多少白天遮蔭換取夜間通透？', min: 0, max: 100, unit: '%', val: 50 },
+            { id: 'neighbor', title: '5. 鄰里隱私 vs. 視野', text: '對保護隱私用的隔音牆接受度？', min: 0, max: 100, unit: '%', val: 50 }
+        ];
+
+        const list = document.getElementById('q-list');
+        qs.forEach(q => {
+            list.innerHTML += `<div class="card">
+                <div class="q-title"><span>${q.title}</span> <span id="v-${q.id}">${q.val}${q.unit}</span></div>
+                <div class="q-text">${q.text}</div>
+                <input type="range" id="i-${q.id}" min="${q.min}" max="${q.max}" value="${q.val}" 
+                    oninput="document.getElementById('v-${q.id}').innerText=this.value+'${q.unit}'">
+            </div>`;
+        });
+
+        async function submit() {
+            const btn = document.getElementById('submit-btn');
+            btn.innerText = "提交中...";
+            btn.disabled = true;
+
+            const data = {
+                created_at: new Date().toISOString()
+            };
+            qs.forEach(q => data[q.id] = parseInt(document.getElementById(`i-${q.id}`).value));
+
+            if (isMockMode) {
+                // 展示模式：存入 localStorage
+                const history = JSON.parse(localStorage.getItem('tainan_survey_data') || '[]');
+                history.push(data);
+                localStorage.setItem('tainan_survey_data', JSON.stringify(history));
+                
+                setTimeout(() => {
+                    document.getElementById('survey').style.display = 'none';
+                    document.getElementById('success').style.display = 'block';
+                }, 800);
+            } else {
+                // 正式模式：存入 Supabase
+                try {
+                    const { error } = await supabaseClient.from('responses').insert([data]);
+                    if (error) throw error;
+                    document.getElementById('survey').style.display = 'none';
+                    document.getElementById('success').style.display = 'block';
+                } catch (err) {
+                    alert("提交失敗：" + err.message);
+                    btn.innerText = "提交意見";
+                    btn.disabled = false;
+                }
+            }
+        }
+    </script>
+
+    <!-- 自動 QR Code 分享功能 (僅在上傳後顯示) -->
+    <div id="auto-qr" style="position:fixed; bottom:20px; right:20px; background:white; padding:15px; border-radius:24px; box-shadow:0 10px 40px rgba(0,0,0,0.15); text-align:center; z-index:9999; border: 2px solid var(--primary); display:none; transition: all 0.3s;">
+        <img id="qr-img" src="" alt="QRCode" style="width:120px; height:120px; display:block;">
+        <p style="font-size:11px; margin:10px 0 0; color:var(--primary); font-weight:bold;">掃描手機填寫</p>
+    </div>
+
+    <script>
+        window.addEventListener('load', () => {
+            const url = window.location.href;
+            const qrBox = document.getElementById("auto-qr");
+            const qrImg = document.getElementById("qr-img");
+
+            // 只有在公開網址 (http/https) 下才啟用，避免本地 file:// 造成手機錯誤
+            if (url.indexOf('http') === 0) {
+                qrBox.style.display = 'block';
+                qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+            } else {
+                console.warn("目前為本地路徑，為了防止手機掃描錯誤，已隱藏 QRCode。請上傳至 Netlify 後再掃描。");
+            }
+        });
+    </script>
+</body>
+</html>

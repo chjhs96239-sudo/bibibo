@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理員數據中心 - 雲端即時版</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --bg: #0f172a; --card: #1e293b; --primary: #22c55e; --text: #f1f5f9; }
+        body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 800px; }
+        .card { background: var(--card); padding: 30px; border-radius: 20px; margin-bottom: 20px; }
+        .btn { width: 100%; padding: 15px; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; }
+        .bar-row { margin-bottom: 20px; }
+        .bar-bg { background: #334155; height: 12px; border-radius: 6px; margin-top: 5px; }
+        .bar-fill { background: var(--primary); height: 100%; width: 0%; transition: width 1s; }
+        #login { max-width: 400px; margin: 100px auto; text-align: center; }
+        #dash { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="login">
+            <h1>數據中心登入</h1>
+            <input type="password" id="pass" placeholder="輸入密碼" style="width:100%; padding:12px; margin:20px 0; border-radius:8px;">
+            <div style="margin-bottom: 20px; text-align: left; font-size: 14px; color: #94a3b8;">
+                <input type="checkbox" id="remember" checked> <label for="remember">在這台電腦上記住登入狀態</label>
+            </div>
+            <button class="btn" onclick="login()">登入並抓取雲端數據</button>
+        </div>
+
+        <div id="dash">
+            <h1>雲端即時統計結果</h1>
+            <div id="count-row" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <p id="count" style="color:var(--primary); font-weight:bold; margin:0;">正在從雲端同步數據...</p>
+                <button onclick="logout()" style="background:none; border:none; color:#94a3b8; cursor:pointer; text-decoration:underline; font-size:12px;">登出並清除記憶</button>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-box" style="border-color: #22c55e;">
+                    <div class="stat-val" id="agree-count" style="color:#22c55e;">0</div>
+                    <div class="stat-lab">總體同意 (支持)</div>
+                </div>
+                <div class="stat-box" style="border-color: #ef4444;">
+                    <div class="stat-val" id="disagree-count" style="color:#ef4444;">0</div>
+                    <div class="stat-lab">總體不同意 (抗拒)</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>各維度平均接受度 (%)</h3>
+                <div id="chart"></div>
+            </div>
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:20px;">
+                <button class="btn" style="background:#475569" onclick="location.reload()">重新整理數據</button>
+                <button class="btn" style="background:#ef4444" onclick="clearAllData()">清除所有資料</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 請替換下方的連線資訊 ---
+        const SUPABASE_URL = 'https://vbfzpnkyudvkzvrwpzbq.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZiZnpwbmt5dWR2a3p2cndwemJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NjY4MzgsImV4cCI6MjA5MjU0MjgzOH0.LjLSDPVlSP8Mrk5uvf44P-PMFx5e6-9RkstnA7-qsCc';
+        // -----------------------
+
+        let supabaseClient;
+        let isMockMode = (SUPABASE_URL === 'YOUR_SUPABASE_URL' || SUPABASE_URL === '');
+
+        if (!isMockMode) {
+            try {
+                supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            } catch(e) {
+                isMockMode = true;
+            }
+        }
+
+        // 檢查是否有記住的登入狀態
+        window.onload = () => {
+            if (localStorage.getItem('admin_logged_in') === 'true') {
+                document.getElementById('login').style.display = 'none';
+                document.getElementById('dash').style.display = 'block';
+                startDataSync();
+            }
+        };
+
+        async function login() {
+            if (document.getElementById('pass').value !== 'tainan2024') return alert('密碼錯誤');
+            
+            if (document.getElementById('remember').checked) {
+                localStorage.setItem('admin_logged_in', 'true');
+            }
+
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('dash').style.display = 'block';
+            startDataSync();
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_logged_in');
+            location.reload();
+        }
+
+        function startDataSync() {
+            if (isMockMode) {
+                fetchMockData();
+            } else {
+                fetchCloudData();
+            }
+        }
+
+        function fetchMockData() {
+            console.log("使用展示模式數據...");
+            const data = JSON.parse(localStorage.getItem('tainan_survey_data') || '[]');
+            document.getElementById('count').innerHTML = `目前累積樣本數：${data.length} 份 <span style="color:orange; font-size:12px;">(展示模式)</span>`;
+            renderStats(data);
+        }
+
+        async function fetchCloudData() {
+            try {
+                const { data, error } = await supabaseClient.from('responses').select('*');
+                if (error) throw error;
+                
+                document.getElementById('count').innerText = `目前累積樣本數：${data.length} 份 (雲端同步中)`;
+                renderStats(data);
+            } catch (err) {
+                console.error(err);
+                alert("抓取雲端數據失敗，切換至展示模式。");
+                fetchMockData();
+            }
+        }
+
+        async function clearAllData() {
+            if (!confirm("⚠️ 警告：這將永久刪除雲端及本地的所有蒐集資料！確定要執行嗎？")) return;
+            
+            // 1. 清除本地 Mock 資料
+            localStorage.removeItem('tainan_survey_data');
+            
+            // 2. 清除雲端資料 (如果已連線)
+            if (!isMockMode) {
+                try {
+                    // Supabase DELETE 通常需要指定過濾條件，這裡使用 created_at 小於現在的時間 (即全部)
+                    const { error } = await supabaseClient
+                        .from('responses')
+                        .delete()
+                        .filter('created_at', 'lt', new Date().toISOString());
+                    
+                    if (error) throw error;
+                    alert("資料已成功清除！");
+                } catch (err) {
+                    alert("本地資料已清空，但雲端刪除失敗：" + err.message);
+                }
+            } else {
+                alert("本地展示資料已重置！");
+            }
+            
+            location.reload();
+        }
+
+        function renderStats(data) {
+            const fields = [
+                { id: 'privacy', label: '1. 隱私 (距離接收度)' },
+                { id: 'thermal', label: '2. 體感溫度 (遮蔽接受度)' },
+                { id: 'effort', label: '3. 坡度 (爬坡意願)' },
+                { id: 'shading', label: '4. 遮蔭 (與安全平衡)' },
+                { id: 'neighbor', label: '5. 鄰里隱私 (隔音牆接受度)' }
+            ];
+
+            // 計算同意與不同意人數
+            let agree = 0;
+            data.forEach(item => {
+                // 簡易邏輯：5題平均 > 50 算同意
+                let avgScore = fields.reduce((acc, f) => acc + (item[f.id] || 0), 0) / fields.length;
+                if (avgScore >= 50) agree++;
+            });
+            
+            document.getElementById('agree-count').innerText = agree;
+            document.getElementById('disagree-count').innerText = data.length - agree;
+
+            const chart = document.getElementById('chart');
+            chart.innerHTML = ''; // 清除舊圖表
+            fields.forEach(f => {
+                let avg = 0;
+                if (data.length > 0) {
+                    const sum = data.reduce((acc, curr) => acc + (curr[f.id] || 0), 0);
+                    avg = Math.round(sum / data.length);
+                }
+
+                chart.innerHTML += `
+                    <div class="bar-row">
+                        <div style="display:flex; justify-content:space-between; font-size:14px;">
+                            <span>${f.label}</span>
+                            <span style="color:var(--primary); font-weight:bold;">${avg}%</span>
+                        </div>
+                        <div class="bar-bg"><div class="bar-fill" style="width:${avg}%"></div></div>
+                    </div>
+                `;
+            });
+        }
+    </script>
+</body>
+</html>
